@@ -87,7 +87,7 @@ def list_events(calendar_id="primary", max_results=20, time_min=None, time_max=N
         return []
 
 
-def add_event(calendar_id, summary, start, end=None, description=""):
+def add_event(calendar_id, summary, start, end=None, description="", add_meet_link=False, attendees=None):
     service = get_calendar_service()
     if not service:
         return None
@@ -104,14 +104,28 @@ def add_event(calendar_id, summary, start, end=None, description=""):
         "start": {"dateTime": start, "timeZone": "UTC"} if "T" in start else {"date": start[:10]},
         "end": {"dateTime": end, "timeZone": "UTC"} if "T" in (end or "") else {"date": (end or start)[:10]},
     }
+    if attendees:
+        body["attendees"] = [{"email": e.strip()} for e in attendees if (e and e.strip())]
+    if add_meet_link:
+        import uuid
+        body["conferenceData"] = {
+            "createRequest": {
+                "requestId": str(uuid.uuid4()),
+                "conferenceSolutionKey": {"type": "hangoutsMeet"},
+            }
+        }
     try:
-        event = service.events().insert(calendarId=calendar_id, body=body).execute()
+        kwargs = {"calendarId": calendar_id, "body": body}
+        if add_meet_link:
+            kwargs["conferenceDataVersion"] = 1
+        event = service.events().insert(**kwargs).execute()
         return {
             "id": event.get("id"),
             "summary": event.get("summary"),
             "start": event.get("start", {}).get("dateTime") or event.get("start", {}).get("date"),
             "end": event.get("end", {}).get("dateTime") or event.get("end", {}).get("date"),
             "htmlLink": event.get("htmlLink"),
+            "hangoutLink": event.get("hangoutLink"),
         }
     except Exception:
         return None
@@ -154,3 +168,14 @@ def delete_event(calendar_id, event_id):
 
 def calendar_configured():
     return CREDENTIALS_PATH.exists()
+
+
+def calendar_has_token():
+    return TOKEN_PATH.exists()
+
+
+def run_connect_flow_sync():
+    """Run OAuth flow (blocking). Opens browser. Call from a thread."""
+    global _calendar_service
+    _calendar_service = None
+    return get_calendar_service() is not None

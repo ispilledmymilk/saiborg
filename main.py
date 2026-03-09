@@ -1,11 +1,12 @@
 """
-Voice assistant API: chat, web search, calendar.
+Saiborg API: chat, web search, calendar.
 Run: uvicorn main:app --reload
 """
 
+import threading
 import time
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -13,9 +14,13 @@ from pydantic import BaseModel
 from services.search import search_web, scrape_page_summary
 from services import calendar_google as cal
 try:
-    from services.llm import format_search_results_with_claude
+    from services import spotify as spotify_module
 except ImportError:
-    format_search_results_with_claude = None
+    spotify_module = None
+try:
+    from services.llm import format_search_results
+except ImportError:
+    format_search_results = None
 
 USER_NAME = "Sai"
 
@@ -31,6 +36,8 @@ class CalendarEventCreate(BaseModel):
     start: str  # ISO datetime or date
     end: str | None = None
     description: str = ""
+    add_meet_link: bool = False
+    attendees: list[str] = []
 
 
 class CalendarEventUpdate(BaseModel):
@@ -41,7 +48,7 @@ class CalendarEventUpdate(BaseModel):
 
 # --- App ---
 
-app = FastAPI(title="Voice Assistant API", version="1.0")
+app = FastAPI(title="Saiborg API", version="1.0")
 
 # Mount static files (frontend)
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -130,8 +137,8 @@ def _route_and_respond(text: str) -> dict:
             action = "search"
             data = {"query": query, "results": results}
             response_text = None
-            if format_search_results_with_claude:
-                response_text = format_search_results_with_claude(query, results)
+            if format_search_results:
+                response_text = format_search_results(query, results)
             if not response_text:
                 response_text = _format_search_reply(query, results)
             return {"response": response_text, "action": action, "data": data}
@@ -181,8 +188,15 @@ async def chat(body: ChatIn):
 async def search(q: str = ""):
     if not q.strip():
         raise HTTPException(status_code=400, detail="Missing query")
-    results = search_web(q.strip(), max_results=8)
-    return {"query": q.strip(), "results": results}
+    query = q.strip()
+    results = search_web(query, max_results=8)
+    if format_search_results and results:
+        answer = format_search_results(query, results)
+    else:
+        answer = None
+    if not answer:
+        answer = _format_search_reply(query, results)
+    return {"query": query, "results": results, "answer": answer}
 
 
 def _format_ics_datetime(iso_str: str) -> str:
@@ -210,7 +224,7 @@ async def calendar_ical(
         raise HTTPException(status_code=400, detail="summary and start are required")
     import uuid
     from datetime import datetime, timedelta, timezone
-    uid = str(uuid.uuid4()) + "@voice-assistant"
+    uid = str(uuid.uuid4()) + "@saiborg"
     dt_start = _format_ics_datetime(start)
     if end and end.strip():
         dt_end = _format_ics_datetime(end)
@@ -228,7 +242,7 @@ async def calendar_ical(
     ics = (
         "BEGIN:VCALENDAR\r\n"
         "VERSION:2.0\r\n"
-        "PRODID:-//Voice Assistant//EN\r\n"
+        "PRODID:-//Saiborg//EN\r\n"
         "BEGIN:VEVENT\r\n"
         f"UID:{uid}\r\n"
         f"DTSTAMP:{dt_start}\r\n"
@@ -248,18 +262,74 @@ async def calendar_ical(
 
 
 @app.get("/api/calendar/events")
-async def calendar_list():
+async def calendar_list(time_min: str = None, time_max: str = None):
     if not cal.calendar_configured():
         return {"configured": False, "events": []}
-    events = cal.list_events(max_results=25)
+    from datetime import datetime, timezone
+    t_min = None
+    t_max = None
+    if time_min:
+        try:
+            dt = datetime.fromisoformat(time_min.replace("Z", "+00:00"))
+            if dt.tzinfo:
+                dt = dt.astimezone(timezone.utc)
+            t_min = dt.replace(tzinfo=None)
+        except Exception:
+            pass
+    if time_max:
+        try:
+            dt = datetime.fromisoformat(time_max.replace("Z", "+00:00"))
+            if dt.tzinfo:
+                dt = dt.astimezone(timezone.utc)
+            t_max = dt.replace(tzinfo=None)
+        except Exception:
+            pass
+    events = cal.list_events(max_results=100, time_min=t_min, time_max=t_max)
     return {"configured": True, "events": events}
+
+
+@app.get("/api/calendar/status")
+async def calendar_status():
+    """Tell the UI whether credentials file exists and whether we have a token (signed in)."""
+    credentials_added = cal.calendar_configured()
+    connected = credentials_added and cal.calendar_has_token()
+    return {"credentials_added": credentials_added, "connected": connected}
+
+
+@app.post("/api/calendar/connect")
+async def calendar_connect():
+    """
+    Start Google OAuth flow. A browser window will open to sign in.
+    Run only when credentials file exists. Returns immediately; sign-in runs in background.
+    """
+    if not cal.calendar_configured():
+        raise HTTPException(
+            status_code=400,
+            detail="Add google_credentials.json to the project folder first. See README for how to get it from Google Cloud Console.",
+        )
+    if cal.calendar_has_token():
+        return {"status": "already_connected", "message": "Calendar is already connected."}
+
+    def _run():
+        cal.run_connect_flow_sync()
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    return {
+        "status": "opening_browser",
+        "message": "A browser window will open for sign-in. Complete sign-in there, then refresh the calendar.",
+    }
 
 
 @app.post("/api/calendar/events")
 async def calendar_add(body: CalendarEventCreate):
     if not cal.calendar_configured():
         raise HTTPException(status_code=503, detail="Calendar not configured")
-    event = cal.add_event("primary", body.summary, body.start, body.end, body.description)
+    event = cal.add_event(
+        "primary", body.summary, body.start, body.end, body.description,
+        add_meet_link=body.add_meet_link,
+        attendees=body.attendees or [],
+    )
     if event is None:
         raise HTTPException(status_code=500, detail="Failed to create event")
     return event
@@ -283,3 +353,171 @@ async def calendar_delete(event_id: str):
     if not ok:
         raise HTTPException(status_code=404, detail="Event not found or delete failed")
     return {"deleted": True}
+
+
+# --- Spotify / Now Playing ---
+
+@app.get("/api/spotify/status")
+async def spotify_status():
+    if not spotify_module or not spotify_module.configured():
+        return {"configured": False, "connected": False}
+    return {"configured": True, "connected": spotify_module.has_token()}
+
+
+@app.get("/api/spotify/auth-url")
+async def spotify_auth_url():
+    if not spotify_module or not spotify_module.configured():
+        raise HTTPException(status_code=400, detail="Spotify not configured. Add SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET to .env")
+    return {"url": spotify_module.get_auth_url()}
+
+
+@app.get("/api/spotify/callback")
+async def spotify_callback(code: str = ""):
+    from fastapi.responses import RedirectResponse
+    if not spotify_module or not spotify_module.configured() or not code:
+        return RedirectResponse(url="/#spotify-error", status_code=302)
+    try:
+        spotify_module.exchange_code_for_tokens(code)
+        return RedirectResponse(url="/#spotify-connected", status_code=302)
+    except Exception:
+        return RedirectResponse(url="/#spotify-error", status_code=302)
+
+
+@app.get("/api/spotify/now-playing")
+async def spotify_now_playing():
+    if not spotify_module or not spotify_module.configured():
+        raise HTTPException(status_code=400, detail="Spotify not configured")
+    if not spotify_module.has_token():
+        return {"playing": None, "connected": False}
+    track = spotify_module.get_now_playing()
+    state = spotify_module.get_player_state() if track else None
+    return {
+        "playing": track,
+        "connected": True,
+        "shuffle_state": state.get("shuffle_state", False) if state else False,
+        "repeat_state": state.get("repeat_state", "off") if state else "off",
+    }
+
+
+@app.post("/api/spotify/play")
+async def spotify_play():
+    if not spotify_module or not spotify_module.has_token():
+        raise HTTPException(status_code=400, detail="Spotify not connected")
+    ok, status = spotify_module.play()
+    if not ok:
+        if status == 404:
+            raise HTTPException(status_code=503, detail="No active Spotify device. Open Spotify on a device and try again.")
+        raise HTTPException(status_code=502, detail="Playback request failed")
+    return {"ok": True}
+
+
+@app.post("/api/spotify/pause")
+async def spotify_pause():
+    if not spotify_module or not spotify_module.has_token():
+        raise HTTPException(status_code=400, detail="Spotify not connected")
+    ok, status = spotify_module.pause()
+    if not ok:
+        if status == 404:
+            raise HTTPException(status_code=503, detail="No active Spotify device.")
+        raise HTTPException(status_code=502, detail="Pause request failed")
+    return {"ok": True}
+
+
+@app.post("/api/spotify/next")
+async def spotify_next():
+    if not spotify_module or not spotify_module.has_token():
+        raise HTTPException(status_code=400, detail="Spotify not connected")
+    ok, status = spotify_module.next_track()
+    if not ok:
+        if status == 404:
+            raise HTTPException(status_code=503, detail="No active Spotify device. Open Spotify on a device and try again.")
+        raise HTTPException(status_code=502, detail="Next track failed")
+    return {"ok": True}
+
+
+@app.post("/api/spotify/previous")
+async def spotify_previous():
+    if not spotify_module or not spotify_module.has_token():
+        raise HTTPException(status_code=400, detail="Spotify not connected")
+    ok, status = spotify_module.previous_track()
+    if not ok:
+        if status == 404:
+            raise HTTPException(status_code=503, detail="No active Spotify device.")
+        raise HTTPException(status_code=502, detail="Previous track failed")
+    return {"ok": True}
+
+
+@app.get("/api/spotify/queue")
+async def spotify_queue():
+    if not spotify_module or not spotify_module.has_token():
+        raise HTTPException(status_code=400, detail="Spotify not connected")
+    data = spotify_module.get_queue()
+    if data is None:
+        raise HTTPException(status_code=502, detail="Failed to get queue")
+    return data
+
+
+@app.post("/api/spotify/seek")
+async def spotify_seek(position_ms: int = Query(..., ge=0)):
+    if not spotify_module or not spotify_module.has_token():
+        raise HTTPException(status_code=400, detail="Spotify not connected")
+    ok, status = spotify_module.seek(position_ms)
+    if not ok:
+        if status == 404:
+            raise HTTPException(status_code=503, detail="No active Spotify device. Open Spotify and play something first.")
+        raise HTTPException(status_code=502, detail="Seek failed")
+    return {"ok": True}
+
+
+@app.post("/api/spotify/shuffle")
+async def spotify_shuffle(state: bool):
+    if not spotify_module or not spotify_module.has_token():
+        raise HTTPException(status_code=400, detail="Spotify not connected")
+    ok = spotify_module.set_shuffle(state)
+    if not ok:
+        raise HTTPException(status_code=502, detail="Shuffle failed")
+    return {"ok": True}
+
+
+@app.post("/api/spotify/repeat")
+async def spotify_repeat(state: str = "off"):
+    if not spotify_module or not spotify_module.has_token():
+        raise HTTPException(status_code=400, detail="Spotify not connected")
+    if state not in ("track", "context", "off"):
+        state = "off"
+    ok = spotify_module.set_repeat(state)
+    if not ok:
+        raise HTTPException(status_code=502, detail="Repeat failed")
+    return {"ok": True}
+
+
+@app.get("/api/spotify/playlists")
+async def spotify_playlists(offset: int = 0, limit: int = 50):
+    if not spotify_module or not spotify_module.has_token():
+        raise HTTPException(status_code=400, detail="Spotify not connected")
+    data = spotify_module.get_playlists(limit=limit, offset=offset)
+    if data is None:
+        raise HTTPException(status_code=502, detail="Failed to get playlists")
+    return data
+
+
+@app.post("/api/spotify/play-playlist")
+async def spotify_play_playlist(uri: str):
+    if not spotify_module or not spotify_module.has_token():
+        raise HTTPException(status_code=400, detail="Spotify not connected")
+    if not uri.startswith("spotify:playlist:"):
+        uri = "spotify:playlist:" + uri
+    ok = spotify_module.play_playlist(uri)
+    if not ok:
+        raise HTTPException(status_code=502, detail="Play playlist failed")
+    return {"ok": True}
+
+
+@app.post("/api/spotify/queue/add")
+async def spotify_queue_add(uri: str):
+    if not spotify_module or not spotify_module.has_token():
+        raise HTTPException(status_code=400, detail="Spotify not connected")
+    ok = spotify_module.add_to_queue(uri)
+    if not ok:
+        raise HTTPException(status_code=502, detail="Add to queue failed")
+    return {"ok": True}

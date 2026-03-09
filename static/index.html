@@ -3,53 +3,157 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Voice Assistant</title>
+  <title>Saiborg</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&family=Silkscreen:wght@400;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-  <div class="app">
-    <aside class="sidebar">
+  <!-- Custom title bar (Electron only, shown via JS) -->
+  <div class="titlebar electron-only" id="titlebar">
+    <div class="titlebar-drag">
+      <span class="logo titlebar-logo">
+        <img src="/static/logo-bunny.png" alt="Saiborg" class="logo-icon logo-img" />
+      </span>
+    </div>
+  </div>
+  <div class="app" id="app">
+    <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
-        <span class="logo">Assistant</span>
+        <span class="logo">
+          <img src="/static/logo-bunny.png" alt="" class="logo-icon logo-img" />
+          <span class="logo-text">Saiborg</span>
+        </span>
+        <div class="sidebar-header-actions">
+          <button type="button" class="theme-toggle" id="theme-toggle" title="Toggle dark/light mode" aria-label="Toggle theme">
+            <span class="theme-icon sun" aria-hidden="true">☀️</span>
+            <span class="theme-icon moon hidden" aria-hidden="true">🌙</span>
+          </button>
+          <button type="button" class="sidebar-toggle" id="sidebar-toggle" title="Expand or collapse sidebar" aria-label="Collapse sidebar">
+            <span class="sidebar-toggle-expand" aria-hidden="true">›</span>
+            <span class="sidebar-toggle-collapse" aria-hidden="true">‹</span>
+          </button>
+        </div>
       </div>
-      <nav class="tabs">
-        <button type="button" class="tab active" data-tab="calendar">Calendar</button>
-        <button type="button" class="tab" data-tab="search">Search</button>
-      </nav>
-      <section id="panel-calendar" class="panel">
-        <h2>Calendar</h2>
-        <div class="calendar-status" id="calendar-status"></div>
-        <ul class="event-list" id="event-list"></ul>
-        <form class="add-event-form" id="add-event-form">
-          <input type="text" name="summary" placeholder="Event title" required />
-          <input type="datetime-local" name="start" required />
-          <input type="datetime-local" name="end" placeholder="End (optional)" />
-          <textarea name="description" placeholder="Notes (optional)" rows="2"></textarea>
-          <div class="form-actions">
-            <button type="submit">Add to Google Calendar</button>
-            <button type="button" id="ical-link-btn">Get iCal link</button>
-            <button type="button" id="ical-download-btn">Download .ics</button>
+      <nav class="sidebar-sections" aria-label="Features">
+        <div class="sidebar-section" data-tab="search">
+          <button type="button" class="sidebar-section-header" aria-expanded="false" aria-controls="section-history" id="section-header-history">
+            <span class="sidebar-section-icon" aria-hidden="true">🔍</span>
+            <span class="sidebar-section-label">History</span>
+            <span class="sidebar-section-chevron" aria-hidden="true">▼</span>
+          </button>
+          <div class="sidebar-section-content" id="section-history" role="region" aria-labelledby="section-header-history">
+            <h3 class="search-history-title">Recent searches</h3>
+            <div class="search-history" id="search-history"></div>
           </div>
-        </form>
-        <div class="ical-link-box hidden" id="ical-link-box">
-          <label>iCal link (share or subscribe):</label>
-          <input type="text" readonly id="ical-link-input" />
-          <button type="button" id="ical-copy-btn">Copy link</button>
         </div>
-      </section>
-      <section id="panel-search" class="panel hidden">
-        <h2>Search history</h2>
-        <div class="search-history" id="search-history"></div>
-        <div class="search-results-display hidden" id="search-results-display">
-          <h3 class="search-results-query" id="search-results-query"></h3>
-          <div class="search-results-list" id="search-results-list"></div>
+        <div class="sidebar-section" data-tab="calendar">
+          <button type="button" class="sidebar-section-header" aria-expanded="false" aria-controls="section-calendar" id="section-header-calendar">
+            <span class="sidebar-section-icon" aria-hidden="true">📅</span>
+            <span class="sidebar-section-label">Calendar</span>
+            <span class="sidebar-section-chevron" aria-hidden="true">▼</span>
+          </button>
+          <div class="sidebar-section-content" id="section-calendar" role="region" aria-labelledby="section-header-calendar">
+            <div class="calendar-status" id="calendar-status"></div>
+            <div class="calendar-connect hidden" id="calendar-connect"></div>
+            <ul class="event-list" id="event-list"></ul>
+          </div>
         </div>
-      </section>
+        <div class="sidebar-section" data-tab="spotify">
+          <button type="button" class="sidebar-section-header" aria-expanded="false" aria-controls="section-spotify" id="section-header-spotify">
+            <span class="sidebar-section-icon sidebar-section-icon-spotify" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/></svg>
+            </span>
+            <span class="sidebar-section-label">Spotify</span>
+            <span class="sidebar-section-chevron" aria-hidden="true">▼</span>
+          </button>
+          <div class="sidebar-section-content" id="section-spotify" role="region" aria-labelledby="section-header-spotify">
+            <div class="sidebar-spotify-player" id="sidebar-spotify-player">
+              <div class="sidebar-now-playing" id="sidebar-now-playing">
+                <div class="sidebar-now-playing-art" id="sidebar-now-playing-art"></div>
+                <div class="sidebar-now-playing-info">
+                  <span class="sidebar-now-playing-title" id="sidebar-now-playing-title">—</span>
+                  <span class="sidebar-now-playing-artist" id="sidebar-now-playing-artist">—</span>
+                </div>
+                <div class="sidebar-now-playing-controls">
+                  <button type="button" class="sidebar-spotify-btn" id="sidebar-spotify-prev" title="Previous" aria-label="Previous">⏮</button>
+                  <button type="button" class="sidebar-spotify-btn" id="sidebar-spotify-play" title="Play / Pause" aria-label="Play Pause">▶</button>
+                  <button type="button" class="sidebar-spotify-btn" id="sidebar-spotify-next" title="Next" aria-label="Next">⏭</button>
+                </div>
+              </div>
+              <p class="sidebar-spotify-hint text-muted">Open full player from the main view.</p>
+            </div>
+          </div>
+        </div>
+        <div class="sidebar-section" data-tab="plant">
+          <button type="button" class="sidebar-section-header" aria-expanded="false" aria-controls="section-plant" id="section-header-plant">
+            <span class="sidebar-section-icon" aria-hidden="true">🌱</span>
+            <span class="sidebar-section-label">Plant</span>
+            <span class="sidebar-section-chevron" aria-hidden="true">▼</span>
+          </button>
+          <div class="sidebar-section-content" id="section-plant" role="region" aria-labelledby="section-header-plant">
+            <p class="text-muted" style="margin:0; font-size:0.9rem;">Water your plant once per day to help it grow.</p>
+          </div>
+        </div>
+      </nav>
     </aside>
     <main class="main">
+      <div class="calendar-view" id="calendar-view">
+        <div class="calendar-view-header">
+          <button type="button" class="calendar-view-nav" id="calendar-view-prev" aria-label="Previous month">‹</button>
+          <h2 class="calendar-view-title" id="calendar-view-title">March 2025</h2>
+          <button type="button" class="calendar-view-nav" id="calendar-view-next" aria-label="Next month">›</button>
+          <div class="calendar-view-header-actions">
+            <button type="button" class="calendar-view-today" id="calendar-view-today" aria-label="Go to current month">Today</button>
+            <button type="button" class="calendar-view-add-btn" id="calendar-view-add-btn" aria-label="Add event">+</button>
+          </div>
+        </div>
+        <div class="calendar-view-weekdays">
+          <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+        </div>
+        <div class="calendar-view-grid" id="calendar-view-grid"></div>
+      </div>
+      <div class="spotify-view-scene hidden" id="spotify-view-scene" aria-hidden="true">
+        <div class="spotify-view-bg"></div>
+      </div>
+      <div class="plant-view hidden" id="plant-view" aria-hidden="true">
+        <div class="plant-view-bg"></div>
+        <div class="plant-garden">
+          <div class="plant" id="plant" data-stage="0" role="img" aria-label="Growing plant">
+            <div class="plant-pot"></div>
+            <div class="plant-soil"></div>
+            <div class="plant-seed"></div>
+            <div class="plant-stem"></div>
+            <div class="plant-leaf plant-leaf-1"></div>
+            <div class="plant-leaf plant-leaf-2"></div>
+            <div class="plant-leaf plant-leaf-3"></div>
+            <div class="plant-leaf plant-leaf-4"></div>
+            <div class="plant-leaf plant-leaf-5"></div>
+          </div>
+          <div class="plant-actions">
+            <button type="button" class="plant-water-btn" id="plant-water-btn" title="Water the plant">💧 Water</button>
+            <button type="button" class="plant-add-to-garden-btn hidden" id="plant-add-to-garden-btn" title="Add this plant to your garden">🌿 Add to garden</button>
+          </div>
+          <span class="plant-stage-label" id="plant-stage-label">Day 0 / 30 — Seed</span>
+          <span class="plant-garden-count" id="plant-garden-count"></span>
+        </div>
+      </div>
+      <div class="search-main-view hidden" id="search-main-view">
+        <div class="intro-hero">
+          <div class="intro-hero-head">
+            <img src="/static/logo-bunny.png" alt="" class="intro-hero-logo" />
+            <span class="intro-hero-greeting" id="intro-greeting">Hi there, I'm Saiborg</span>
+          </div>
+          <h1 class="intro-hero-title">Where should we start?</h1>
+        </div>
+        <p class="search-main-hint">Use the box below to search the web or chat. Use the mic for voice.</p>
+        <div class="search-results-display hidden" id="search-results-display">
+          <h3 class="search-results-query" id="search-results-query"></h3>
+          <div class="search-results-answer" id="search-results-answer"></div>
+          <div class="search-results-list" id="search-results-list"></div>
+        </div>
+      </div>
       <section id="panel-chat" class="chat-panel">
         <div class="messages" id="messages"></div>
         <div class="input-row">
@@ -63,6 +167,88 @@
         </div>
       </section>
     </main>
+  </div>
+  <!-- Day detail modal (double-click date): view/add/edit events -->
+  <div class="calendar-modal-backdrop hidden" id="calendar-day-modal-backdrop"></div>
+  <div class="calendar-day-modal hidden" id="calendar-day-modal">
+    <div class="calendar-day-modal-header">
+      <h3 class="calendar-day-modal-title" id="calendar-day-modal-title">Date</h3>
+      <button type="button" class="calendar-day-modal-close" id="calendar-day-modal-close" aria-label="Close">×</button>
+    </div>
+    <div class="calendar-day-modal-events" id="calendar-day-modal-events"></div>
+    <form class="calendar-day-modal-form" id="calendar-day-modal-form">
+      <input type="text" name="summary" placeholder="Event title" required />
+      <input type="datetime-local" name="start" required />
+      <input type="datetime-local" name="end" placeholder="End (optional)" />
+      <textarea name="description" placeholder="Notes (optional)" rows="2"></textarea>
+      <button type="submit">Add event</button>
+    </form>
+  </div>
+  <!-- New event modal (plus button): create with Meet + invite -->
+  <div class="calendar-modal-backdrop hidden" id="calendar-new-modal-backdrop"></div>
+  <div class="calendar-new-modal hidden" id="calendar-new-modal">
+    <div class="calendar-day-modal-header">
+      <h3 class="calendar-day-modal-title">New event</h3>
+      <button type="button" class="calendar-day-modal-close" id="calendar-new-modal-close" aria-label="Close">×</button>
+    </div>
+    <form class="calendar-new-modal-form" id="calendar-new-modal-form">
+      <input type="text" name="summary" placeholder="Event title" required />
+      <input type="datetime-local" name="start" required />
+      <input type="datetime-local" name="end" placeholder="End (optional)" />
+      <textarea name="description" placeholder="Notes (optional)" rows="2"></textarea>
+      <label class="calendar-new-modal-option"><input type="checkbox" name="add_meet_link" /> Add Google Meet link</label>
+      <label class="calendar-new-modal-option">Invite people (emails, comma-separated)</label>
+      <input type="text" name="attendees" placeholder="email1@example.com, email2@example.com" />
+      <button type="submit">Create event</button>
+    </form>
+  </div>
+  <!-- Spotify maximized player modal -->
+  <div class="spotify-modal hidden" id="spotify-modal" aria-hidden="true">
+    <div class="spotify-modal-backdrop" id="spotify-modal-backdrop"></div>
+    <div class="spotify-modal-content">
+      <div class="spotify-modal-header">
+        <h2 class="spotify-modal-title">Spotify</h2>
+        <div class="spotify-modal-header-actions">
+          <button type="button" class="spotify-modal-btn-header" id="spotify-modal-minimize" title="Minimize" aria-label="Minimize">−</button>
+          <button type="button" class="spotify-modal-btn-header spotify-modal-close" id="spotify-modal-close" title="Close player" aria-label="Close">✕</button>
+        </div>
+      </div>
+      <div class="spotify-modal-body">
+        <div class="spotify-modal-now-playing">
+          <div class="spotify-modal-art" id="spotify-modal-art"></div>
+          <div class="spotify-modal-track">
+            <span class="spotify-modal-track-title" id="spotify-modal-title">—</span>
+            <span class="spotify-modal-track-artist" id="spotify-modal-artist">—</span>
+          </div>
+        </div>
+        <div class="spotify-progress-wrap">
+          <input type="range" class="spotify-progress" id="spotify-progress" min="0" max="1000" value="0" title="Seek" />
+          <div class="spotify-progress-times">
+            <span class="spotify-time-current" id="spotify-time-current">0:00</span>
+            <span class="spotify-time-duration" id="spotify-time-duration">0:00</span>
+          </div>
+        </div>
+        <div class="spotify-modal-controls">
+          <button type="button" class="spotify-modal-btn" id="spotify-modal-shuffle" title="Shuffle" aria-label="Shuffle">🔀</button>
+          <button type="button" class="spotify-modal-btn" id="spotify-modal-prev" title="Previous" aria-label="Previous">⏮</button>
+          <button type="button" class="spotify-modal-btn spotify-modal-play-pause" id="spotify-modal-play-pause" title="Play / Pause" aria-label="Play Pause">▶</button>
+          <button type="button" class="spotify-modal-btn" id="spotify-modal-next" title="Next" aria-label="Next">⏭</button>
+          <button type="button" class="spotify-modal-btn" id="spotify-modal-repeat" title="Repeat" aria-label="Repeat">🔁</button>
+        </div>
+        <div class="spotify-modal-tabs">
+          <button type="button" class="spotify-modal-tab active" data-spotify-panel="queue">Queue</button>
+          <button type="button" class="spotify-modal-tab" data-spotify-panel="playlists">Playlists</button>
+        </div>
+        <div class="spotify-modal-panel active" id="spotify-panel-queue">
+          <ul class="spotify-queue-list" id="spotify-queue-list"></ul>
+          <p class="spotify-empty-hint" id="spotify-queue-empty">No tracks in queue.</p>
+        </div>
+        <div class="spotify-modal-panel" id="spotify-panel-playlists">
+          <ul class="spotify-playlists-list" id="spotify-playlists-list"></ul>
+          <p class="spotify-empty-hint" id="spotify-playlists-loading">Loading playlists…</p>
+        </div>
+      </div>
+    </div>
   </div>
   <script src="/static/app.js"></script>
 </body>

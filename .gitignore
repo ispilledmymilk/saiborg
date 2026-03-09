@@ -4,6 +4,7 @@
 !.env.example
 google_credentials.json
 google_calendar_token.json
+spotify_token.json
 *.pem
 
 # Python
@@ -22,6 +23,10 @@ htmlcov/
 
 # Vercel
 .vercel
+
+# Node / Electron
+node_modules/
+dist/
 
 # IDE / OS
 .idea/

@@ -1,0 +1,32 @@
+{
+  "name": "saiborg",
+  "version": "1.0.0",
+  "description": "Saiborg — voice assistant desktop app",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "build": "electron-builder"
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1"
+  },
+  "build": {
+    "appId": "com.saiborg.app",
+    "productName": "Saiborg",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**",
+      "static/**",
+      "services/**",
+      "main.py",
+      "requirements.txt"
+    ],
+    "extraResources": []
+  }
+}

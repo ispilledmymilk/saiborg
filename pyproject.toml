@@ -1,0 +1,12 @@
+[project]
+name = "voice-assistant"
+version = "1.0"
+description = "Voice Assistant web app"
+requires-python = ">=3.10"
+
+[project.scripts]
+app = "main:app"
+
+[tool.vercel]
+# Tell Vercel to use the FastAPI app from main.py
+buildCommand = ""

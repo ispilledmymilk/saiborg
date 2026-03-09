@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Voice Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <span class="logo">Assistant</span>
+      </div>
+      <nav class="tabs">
+        <button type="button" class="tab active" data-tab="calendar">Calendar</button>
+        <button type="button" class="tab" data-tab="search">Search</button>
+      </nav>
+      <section id="panel-calendar" class="panel">
+        <h2>Calendar</h2>
+        <div class="calendar-status" id="calendar-status"></div>
+        <ul class="event-list" id="event-list"></ul>
+        <form class="add-event-form" id="add-event-form">
+          <input type="text" name="summary" placeholder="Event title" required />
+          <input type="datetime-local" name="start" required />
+          <input type="datetime-local" name="end" placeholder="End (optional)" />
+          <textarea name="description" placeholder="Notes (optional)" rows="2"></textarea>
+          <div class="form-actions">
+            <button type="submit">Add to Google Calendar</button>
+            <button type="button" id="ical-link-btn">Get iCal link</button>
+            <button type="button" id="ical-download-btn">Download .ics</button>
+          </div>
+        </form>
+        <div class="ical-link-box hidden" id="ical-link-box">
+          <label>iCal link (share or subscribe):</label>
+          <input type="text" readonly id="ical-link-input" />
+          <button type="button" id="ical-copy-btn">Copy link</button>
+        </div>
+      </section>
+      <section id="panel-search" class="panel hidden">
+        <h2>Search history</h2>
+        <div class="search-history" id="search-history"></div>
+        <div class="search-results-display hidden" id="search-results-display">
+          <h3 class="search-results-query" id="search-results-query"></h3>
+          <div class="search-results-list" id="search-results-list"></div>
+        </div>
+      </section>
+    </aside>
+    <main class="main">
+      <section id="panel-chat" class="chat-panel">
+        <div class="messages" id="messages"></div>
+        <div class="input-row">
+          <button type="button" class="mic-btn" id="mic-btn" title="Hold to speak">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 1 3 3v8a3 3 0 0 1-6 0V4a3 3 0 0 1 3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+          </button>
+          <form class="chat-form" id="chat-form">
+            <input type="text" id="chat-input" placeholder="Type or say something…" autocomplete="off" />
+            <button type="submit">Send</button>
+          </form>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -4,7 +4,6 @@ Run: uvicorn main:app --reload
 """
 
 import time
-from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles

@@ -6,7 +6,7 @@ Run: uvicorn main:app --reload
 import threading
 import time
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -21,6 +21,15 @@ try:
     from services.llm import format_search_results
 except ImportError:
     format_search_results = None
+try:
+    import voice_assistant as voice_module
+    def _transcribe_wav_bytes(b: bytes) -> str:
+        return voice_module.transcribe_wav_bytes(b)
+    _voice_available = True
+except ImportError:
+    voice_module = None
+    _transcribe_wav_bytes = None
+    _voice_available = False
 
 USER_NAME = "Sai"
 
@@ -143,7 +152,24 @@ def _route_and_respond(text: str) -> dict:
                 response_text = _format_search_reply(query, results)
             return {"response": response_text, "action": action, "data": data}
 
-    # Calendar: list events
+    # Calendar: list events (today)
+    if any(w in t for w in ("what do i have today", "what's today", "today's schedule", "events today", "meetings today", "what am i doing today")):
+        from datetime import datetime, timedelta
+        now = datetime.utcnow()
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_end = today_start + timedelta(days=1)
+        events = cal.list_events(max_results=20, time_min=today_start, time_max=today_end)
+        action = "calendar"
+        data = {"events": events}
+        if not cal.calendar_configured():
+            response_text = "Your calendar isn't set up yet."
+        elif not events:
+            response_text = "You're all clear for today — no events."
+        else:
+            response_text = f"You have {len(events)} event(s) today. " + ", ".join(f'{e["summary"]} at {e["start"]}' for e in events[:5])
+        return {"response": response_text, "action": action, "data": data}
+
+    # Calendar: list events (general)
     if any(w in t for w in ("my calendar", "my events", "what's on my calendar", "upcoming events", "list my events", "show my schedule")):
         events = cal.list_events(max_results=15)
         action = "calendar"
@@ -164,6 +190,37 @@ def _route_and_respond(text: str) -> dict:
         response_text = "You can add an event in the Calendar panel — just pick a title and time. Or tell me what you want to add and I'll point you there."
         return {"response": response_text, "action": action, "data": data}
 
+    # Spotify: voice control (short, speakable responses)
+    if spotify_module and spotify_module.has_token():
+        # Next track
+        if any(w in t for w in ("next song", "next track", "skip", "skip song", "play next")):
+            ok, _ = spotify_module.next_track()
+            response_text = "Playing next track." if ok else "Couldn't skip. Open Spotify on a device and try again."
+            return {"response": response_text, "action": "spotify", "data": {"command": "next", "ok": ok}}
+        # Previous track
+        if any(w in t for w in ("previous song", "previous track", "last song", "go back", "play previous")):
+            ok, _ = spotify_module.previous_track()
+            response_text = "Playing previous track." if ok else "Couldn't go back. Open Spotify on a device and try again."
+            return {"response": response_text, "action": "spotify", "data": {"command": "previous", "ok": ok}}
+        # Play
+        if any(w in t for w in ("play music", "play spotify", "resume", "resume music", "unpause")):
+            ok, _ = spotify_module.play()
+            response_text = "Playing." if ok else "Couldn't start. Open Spotify on a device first."
+            return {"response": response_text, "action": "spotify", "data": {"command": "play", "ok": ok}}
+        # Pause
+        if any(w in t for w in ("pause music", "pause spotify", "pause song", "stop music")):
+            ok, _ = spotify_module.pause()
+            response_text = "Paused." if ok else "Couldn't pause. Open Spotify on a device first."
+            return {"response": response_text, "action": "spotify", "data": {"command": "pause", "ok": ok}}
+        # What's playing
+        if any(w in t for w in ("what's playing", "what song is this", "current track", "what am i listening to", "now playing")):
+            track = spotify_module.get_now_playing()
+            if track and track.get("title"):
+                response_text = f"Now playing: {track.get('title', '—')} by {track.get('artist', '—')}."
+            else:
+                response_text = "Nothing is playing right now. Say \"play music\" to start."
+            return {"response": response_text, "action": "spotify", "data": {"command": "now_playing", "track": track}}
+
     # General
     if any(w in t for w in ("hello", "hi", "hey")):
         response_text = f"Hey {USER_NAME}! What can I help you with?"
@@ -182,6 +239,36 @@ def _route_and_respond(text: str) -> dict:
 @app.post("/api/chat")
 async def chat(body: ChatIn):
     return _route_and_respond(body.text)
+
+
+@app.get("/api/voice/status")
+async def voice_status():
+    """Return whether server-side voice (Whisper) is available."""
+    return {"available": _voice_available}
+
+
+@app.post("/api/voice/transcribe")
+async def voice_transcribe(audio: UploadFile = File(..., description="WAV audio file from browser recording")):
+    """Transcribe uploaded WAV audio using Whisper. Works offline."""
+    if not _voice_available or not _transcribe_wav_bytes:
+        raise HTTPException(
+            status_code=503,
+            detail="Server voice not available. Install: pip install openai-whisper",
+        )
+    try:
+        body = await audio.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="Failed to read audio")
+    if len(body) > 10 * 1024 * 1024:  # 10 MB max
+        raise HTTPException(status_code=400, detail="Audio file too large")
+    try:
+        text = _transcribe_wav_bytes(body)
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail="Transcription failed. Ensure openai-whisper is installed and the audio is valid WAV.",
+        )
+    return {"text": text or ""}
 
 
 @app.get("/api/search")
@@ -431,7 +518,11 @@ async def spotify_next():
     if not ok:
         if status == 404:
             raise HTTPException(status_code=503, detail="No active Spotify device. Open Spotify on a device and try again.")
-        raise HTTPException(status_code=502, detail="Next track failed")
+        if status in (401, None):
+            raise HTTPException(status_code=401, detail="Spotify session expired. Reconnect in settings.")
+        if status == 403:
+            raise HTTPException(status_code=403, detail="Permission denied. Reconnect Spotify to grant playback control.")
+        raise HTTPException(status_code=502, detail=f"Next track failed (Spotify returned {status}). Try opening Spotify on a device first.")
     return {"ok": True}
 
 
@@ -470,12 +561,12 @@ async def spotify_seek(position_ms: int = Query(..., ge=0)):
 
 
 @app.post("/api/spotify/shuffle")
-async def spotify_shuffle(state: bool):
+async def spotify_shuffle(state: bool = Query(..., description="true or false")):
     if not spotify_module or not spotify_module.has_token():
         raise HTTPException(status_code=400, detail="Spotify not connected")
     ok = spotify_module.set_shuffle(state)
     if not ok:
-        raise HTTPException(status_code=502, detail="Shuffle failed")
+        raise HTTPException(status_code=502, detail="Shuffle failed. Make sure a device is playing.")
     return {"ok": True}
 
 

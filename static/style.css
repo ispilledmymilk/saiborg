@@ -1272,6 +1272,19 @@ body.electron .main {
   margin: 0;
 }
 
+.sidebar-spotify-error,
+.spotify-control-error {
+  font-size: 0.75rem;
+  color: var(--danger, #c53030);
+  margin: 0.35rem 0 0;
+  padding: 0.25rem 0;
+}
+
+.sidebar-spotify-error.hidden,
+.spotify-control-error.hidden {
+  display: none;
+}
+
 .app.sidebar-collapsed .sidebar-section-content {
   max-height: 0 !important;
 }
@@ -2746,6 +2759,24 @@ body.electron .main {
 
 .chat-form button:hover {
   background: var(--accent-dim);
+}
+
+.voice-tts-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.voice-tts-toggle input { accent-color: var(--accent); cursor: pointer; }
+.voice-tts-label { user-select: none; }
+
+.voice-hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.8rem;
+  line-height: 1.4;
 }
 
 /* Status */

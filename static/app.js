@@ -130,81 +130,235 @@
   const searchHistory = [];
   let lastSpeechTranscript = "";
   let speechSubmitted = false;
+  let serverVoiceAvailable = false;
+
+  const voiceTtsToggle = document.getElementById("voice-tts-toggle");
+  const voiceHint = document.getElementById("voice-hint");
+  const VOICE_TTS_STORAGE_KEY = "saiborg-voice-speak-responses";
 
   function supportsSpeech() {
     return "webkitSpeechRecognition" in window || "SpeechRecognition" in window;
   }
 
-  function initSpeech() {
-    if (!supportsSpeech()) {
-      if (micBtn) {
-        micBtn.disabled = true;
-        micBtn.title = "Voice input not supported in this browser";
-      }
-      return;
-    }
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    recognition = new SpeechRecognition();
-    recognition.continuous = false;
-    recognition.interimResults = true;
-    recognition.lang = "en-US";
-    recognition.onresult = function (e) {
-      const last = e.results.length - 1;
-      const text = (e.results[last][0] && e.results[last][0].transcript) ? e.results[last][0].transcript.trim() : "";
-      lastSpeechTranscript = text;
-      if (e.results[last].isFinal && text) {
-        speechSubmitted = true;
-        if (chatInput) chatInput.value = text;
-        if (currentTab === "search") {
-          runNewSearch(text);
-          if (chatInput) chatInput.value = "";
-        } else {
-          sendMessage(text);
-        }
-      }
-    };
-    recognition.onerror = function (e) {
-      micBtn.classList.remove("listening");
-      if (e.error === "not-allowed") {
-        if (messagesEl) addMessage("assistant", "Microphone access denied. Allow the mic in your browser or system settings and try again.");
-      } else if (e.error && e.error !== "no-speech" && e.error !== "aborted") {
-        if (messagesEl) addMessage("assistant", "Voice error: " + (e.error || "unknown"));
-      }
-    };
-    recognition.onend = function () {
-      micBtn.classList.remove("listening");
-      if (!speechSubmitted && lastSpeechTranscript.trim()) {
-        if (chatInput) chatInput.value = lastSpeechTranscript;
-        if (currentTab === "search") {
-          runNewSearch(lastSpeechTranscript);
-          if (chatInput) chatInput.value = "";
-        } else {
-          sendMessage(lastSpeechTranscript);
-        }
-      }
-      lastSpeechTranscript = "";
-      speechSubmitted = false;
-    };
+  function getSpeakResponses() {
+    return voiceTtsToggle ? voiceTtsToggle.checked : false;
   }
 
-  micBtn.addEventListener("mousedown", function () {
-    if (!recognition || micBtn.disabled) return;
-    lastSpeechTranscript = "";
-    speechSubmitted = false;
+  function speakResponse(text) {
+    if (!text || typeof text !== "string") return;
+    if (!("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    var clean = text
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!clean) return;
+    var u = new SpeechSynthesisUtterance(clean);
+    u.rate = 0.95;
+    u.pitch = 1;
+    var voices = window.speechSynthesis.getVoices();
+    var en = voices.filter(function (v) { return v.lang.startsWith("en"); })[0];
+    if (en) u.voice = en;
+    window.speechSynthesis.speak(u);
+  }
+
+  var serverRecording = { stream: null, context: null, source: null, processor: null, chunks: [], sampleRate: 44100 };
+
+  function buildWavBlob(samples, sampleRate) {
+    var numChannels = 1, bitsPerSample = 16, bytesPerSample = 2, blockAlign = 2, byteRate = sampleRate * blockAlign;
+    var dataSize = samples.length * bytesPerSample;
+    var buffer = new ArrayBuffer(44 + dataSize);
+    var view = new DataView(buffer);
+    var offset = 0;
+    function writeStr(s) { for (var i = 0; i < s.length; i++) view.setUint8(offset++, s.charCodeAt(i)); }
+    writeStr("RIFF"); view.setUint32(offset, 36 + dataSize, true); offset += 4;
+    writeStr("WAVE"); writeStr("fmt "); view.setUint32(offset, 16, true); offset += 4;
+    view.setUint16(offset, 1, true); offset += 2; view.setUint16(offset, 1, true); offset += 2;
+    view.setUint32(offset, sampleRate, true); offset += 4; view.setUint32(offset, byteRate, true); offset += 4;
+    view.setUint16(offset, blockAlign, true); offset += 2; view.setUint16(offset, bitsPerSample, true); offset += 2;
+    writeStr("data"); view.setUint32(offset, dataSize, true); offset += 4;
+    var int16 = new Int16Array(buffer, 44, samples.length);
+    for (var i = 0; i < samples.length; i++) int16[i] = samples[i];
+    return new Blob([buffer], { type: "audio/wav" });
+  }
+
+  function startServerRecording() {
+    return navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+      serverRecording.stream = stream;
+      serverRecording.chunks = [];
+      var context = new (window.AudioContext || window.webkitAudioContext)();
+      serverRecording.context = context;
+      var source = context.createMediaStreamSource(stream);
+      serverRecording.source = source;
+      serverRecording.sampleRate = context.sampleRate;
+      var processor = context.createScriptProcessor(4096, 1, 1);
+      serverRecording.processor = processor;
+      processor.onaudioprocess = function (e) {
+        var input = e.inputBuffer.getChannelData(0);
+        for (var i = 0; i < input.length; i++)
+          serverRecording.chunks.push(Math.max(-32768, Math.min(32767, Math.floor(input[i] * 32768))));
+      };
+      source.connect(processor);
+      processor.connect(context.destination);
+    });
+  }
+
+  function stopServerRecording() {
+    if (serverRecording.processor) { serverRecording.processor.disconnect(); serverRecording.processor = null; }
+    if (serverRecording.source) { serverRecording.source.disconnect(); serverRecording.source = null; }
+    if (serverRecording.stream) { serverRecording.stream.getTracks().forEach(function (t) { t.stop(); }); serverRecording.stream = null; }
+    if (serverRecording.context) { serverRecording.context.close(); serverRecording.context = null; }
+    var blob = buildWavBlob(serverRecording.chunks, serverRecording.sampleRate);
+    serverRecording.chunks = [];
+    return blob;
+  }
+
+  function useVoiceResult(text) {
+    text = (text || "").trim();
+    if (!text) { if (messagesEl) addMessage("assistant", "Couldn't hear anything. Try again."); return; }
+    if (chatInput) chatInput.value = text;
+    if (currentTab === "search") { runNewSearch(text); if (chatInput) chatInput.value = ""; } else { sendMessage(text, true); }
+  }
+
+  function initSpeech() {
+    if (!supportsSpeech() && !navigator.mediaDevices) {
+      if (micBtn) { micBtn.disabled = true; micBtn.title = "Voice input not supported"; }
+      return;
+    }
+    fetch(API + "/voice/status").then(function (r) { return r.json(); }).then(function (data) {
+      serverVoiceAvailable = data && data.available === true;
+    }).catch(function () { serverVoiceAvailable = false; }).finally(function () {
+      if (!serverVoiceAvailable && !recognition && micBtn) {
+        micBtn.disabled = true;
+        micBtn.title = "Voice not available. Install Whisper (pip install openai-whisper) for server voice, or use Chrome for browser voice.";
+      }
+    });
+
+    if (supportsSpeech()) {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = "en-US";
+      recognition.onresult = function (e) {
+        const last = e.results.length - 1;
+        const text = (e.results[last][0] && e.results[last][0].transcript) ? e.results[last][0].transcript.trim() : "";
+        lastSpeechTranscript = text;
+        if (e.results[last].isFinal && text) {
+          speechSubmitted = true;
+          if (chatInput) chatInput.value = text;
+          if (currentTab === "search") {
+            runNewSearch(text);
+            if (chatInput) chatInput.value = "";
+          } else {
+            sendMessage(text, true);
+          }
+        }
+      };
+      recognition.onerror = function (e) {
+        micBtn.classList.remove("listening");
+        if (e.error === "not-allowed") {
+          if (messagesEl) addMessage("assistant", "Microphone access denied. Allow the mic in your browser or system settings and try again.");
+        } else if (e.error === "network") {
+          if (messagesEl) addMessage("assistant", "Voice needs an internet connection. Check your network and try again. If you're online, the recognition service may be temporarily unavailable.");
+        } else if (e.error && e.error !== "no-speech" && e.error !== "aborted") {
+          if (messagesEl) addMessage("assistant", "Voice error: " + (e.error || "unknown"));
+        }
+      };
+      recognition.onend = function () {
+        micBtn.classList.remove("listening");
+        if (!speechSubmitted && lastSpeechTranscript.trim()) {
+          if (chatInput) chatInput.value = lastSpeechTranscript;
+          if (currentTab === "search") {
+            runNewSearch(lastSpeechTranscript);
+            if (chatInput) chatInput.value = "";
+          } else {
+            sendMessage(lastSpeechTranscript, true);
+          }
+        }
+        lastSpeechTranscript = "";
+        speechSubmitted = false;
+      };
+    }
+  }
+
+  if (voiceTtsToggle) {
     try {
-      recognition.start();
+      voiceTtsToggle.checked = localStorage.getItem(VOICE_TTS_STORAGE_KEY) === "true";
+    } catch (_) {}
+    voiceTtsToggle.addEventListener("change", function () {
+      try {
+        localStorage.setItem(VOICE_TTS_STORAGE_KEY, voiceTtsToggle.checked ? "true" : "false");
+      } catch (_) {}
+    });
+  }
+  if (voiceHint && !supportsSpeech() && !navigator.mediaDevices) {
+    voiceHint.classList.add("hidden");
+  }
+  if (window.speechSynthesis && typeof window.speechSynthesis.getVoices === "function" && window.speechSynthesis.getVoices().length === 0) {
+    window.speechSynthesis.addEventListener("voiceschanged", function () {});
+  }
+
+  var serverRecordingActive = false;
+
+  micBtn.addEventListener("mousedown", function () {
+    if (micBtn.disabled) return;
+    if (serverVoiceAvailable) {
+      serverRecordingActive = true;
       micBtn.classList.add("listening");
-    } catch (err) {
-      if (err.name !== "InvalidStateError") {
-        if (messagesEl) addMessage("assistant", "Could not start microphone. Try allowing mic access and try again.");
+      startServerRecording().catch(function (err) {
+        serverRecordingActive = false;
+        micBtn.classList.remove("listening");
+        if (messagesEl) addMessage("assistant", "Microphone access denied or unavailable. Allow the mic and try again.");
+      });
+    } else if (recognition) {
+      lastSpeechTranscript = "";
+      speechSubmitted = false;
+      try {
+        recognition.start();
+        micBtn.classList.add("listening");
+      } catch (err) {
+        if (err.name !== "InvalidStateError") {
+          if (messagesEl) addMessage("assistant", "Could not start microphone. Try allowing mic access and try again.");
+        }
       }
     }
   });
+
   micBtn.addEventListener("mouseup", function () {
-    if (recognition) recognition.stop();
+    if (serverVoiceAvailable && serverRecordingActive) {
+      serverRecordingActive = false;
+      micBtn.classList.remove("listening");
+      try {
+        var blob = stopServerRecording();
+        var formData = new FormData();
+        formData.append("audio", blob, "recording.wav");
+        fetch(API + "/voice/transcribe", { method: "POST", body: formData })
+          .then(function (r) {
+            if (r.status === 503) return r.json().then(function (d) { throw new Error(d.detail || "Server voice unavailable"); });
+            if (!r.ok) throw new Error("Transcription failed");
+            return r.json();
+          })
+          .then(function (data) { useVoiceResult(data.text); })
+          .catch(function (err) {
+            if (messagesEl) addMessage("assistant", err.message || "Voice failed. Install Whisper: pip install openai-whisper");
+          });
+      } catch (e) {
+        if (messagesEl) addMessage("assistant", "Recording failed. Try again.");
+      }
+    } else if (recognition) {
+      recognition.stop();
+    }
   });
+
   micBtn.addEventListener("mouseleave", function () {
-    if (recognition) recognition.stop();
+    if (serverVoiceAvailable && serverRecordingActive) {
+      serverRecordingActive = false;
+      micBtn.classList.remove("listening");
+      try { stopServerRecording(); } catch (_) {}
+    } else if (recognition) {
+      recognition.stop();
+    }
   });
 
   function linkify(text) {
@@ -264,7 +418,7 @@
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
-  function sendMessage(text) {
+  function sendMessage(text, fromVoice) {
     text = (text || "").trim();
     if (!text) return;
     addMessage("user", text);
@@ -278,13 +432,18 @@
       .then((r) => r.json())
       .then((data) => {
         addMessage("assistant", data.response);
+        if (fromVoice || getSpeakResponses()) {
+          speakResponse(data.response);
+        }
         if (data.action === "search" && data.data && data.data.query) {
           searchHistory.push({
             query: data.data.query,
             results: data.data.results || [],
+            answer: data.response || "",
           });
           renderSearchHistory();
           showTab("search");
+          showSearchResults(searchHistory.length - 1);
         }
         if (data.action === "calendar" && data.data && data.data.events) {
           showTab("calendar");
@@ -996,20 +1155,35 @@
     });
   }
   function spotifyControl(action) {
+    var errEl = document.getElementById("spotify-control-error");
+    var sidebarErrEl = document.getElementById("sidebar-spotify-error");
+    function clearErr() {
+      if (errEl) { errEl.textContent = ""; errEl.classList.add("hidden"); }
+      if (sidebarErrEl) { sidebarErrEl.textContent = ""; sidebarErrEl.classList.add("hidden"); }
+    }
+    function showErr(msg) {
+      if (errEl) { errEl.textContent = msg; errEl.classList.remove("hidden"); }
+      if (sidebarErrEl) { sidebarErrEl.textContent = msg; sidebarErrEl.classList.remove("hidden"); }
+      if (typeof addMessage === "function") addMessage("assistant", msg);
+    }
+    clearErr();
     fetch(API + "/spotify/" + action, { method: "POST" })
       .then(function (r) {
         if (r.ok) {
           setTimeout(pollNowPlaying, 300);
-        } else {
-          r.json().catch(function () { return {}; }).then(function (body) {
-            var msg = (body && body.detail) ? body.detail : "Spotify request failed.";
-            if (typeof addMessage === "function") addMessage("assistant", msg);
-          });
+          return;
         }
+        return r.json().catch(function () { return {}; }).then(function (body) {
+          var msg = (body && body.detail) ? body.detail : "Spotify request failed.";
+          showErr(msg);
+        });
+      })
+      .then(function (ran) {
+        if (ran !== undefined) return;
         setTimeout(pollNowPlaying, 500);
       })
       .catch(function () {
-        if (typeof addMessage === "function") addMessage("assistant", "Spotify control failed. Check your connection and try again.");
+        showErr("Spotify control failed. Check your connection and try again.");
         setTimeout(pollNowPlaying, 500);
       });
   }
@@ -1420,15 +1594,52 @@
   });
   if (spotifyModalShuffle) spotifyModalShuffle.addEventListener("click", function () {
     var next = !spotifyModalShuffle.classList.contains("active");
+    var errEl = document.getElementById("spotify-control-error");
+    var sidebarErrEl = document.getElementById("sidebar-spotify-error");
+    function clearErr() {
+      if (errEl) { errEl.textContent = ""; errEl.classList.add("hidden"); }
+      if (sidebarErrEl) { sidebarErrEl.textContent = ""; sidebarErrEl.classList.add("hidden"); }
+    }
+    function showErr(msg) {
+      if (errEl) { errEl.textContent = msg; errEl.classList.remove("hidden"); }
+      if (sidebarErrEl) { sidebarErrEl.textContent = msg; sidebarErrEl.classList.remove("hidden"); }
+    }
+    clearErr();
     fetch(API + "/spotify/shuffle?state=" + next, { method: "POST" })
-      .then(function (r) { if (r.ok) pollNowPlaying(); });
+      .then(function (r) {
+        if (r.ok) {
+          pollNowPlaying();
+          return;
+        }
+        return r.json().catch(function () { return {}; }).then(function (body) {
+          showErr((body && body.detail) ? body.detail : "Shuffle failed.");
+        });
+      })
+      .catch(function () { showErr("Shuffle request failed."); });
   });
   if (spotifyModalRepeat) spotifyModalRepeat.addEventListener("click", function () {
+    var errEl = document.getElementById("spotify-control-error");
+    var sidebarErrEl = document.getElementById("sidebar-spotify-error");
+    function clearErr() {
+      if (errEl) { errEl.textContent = ""; errEl.classList.add("hidden"); }
+      if (sidebarErrEl) { sidebarErrEl.textContent = ""; sidebarErrEl.classList.add("hidden"); }
+    }
+    function showErr(msg) {
+      if (errEl) { errEl.textContent = msg; errEl.classList.remove("hidden"); }
+      if (sidebarErrEl) { sidebarErrEl.textContent = msg; sidebarErrEl.classList.remove("hidden"); }
+    }
+    clearErr();
     fetch(API + "/spotify/now-playing").then(function (r) { return r.json(); }).then(function (d) {
       var state = (d.repeat_state || "off");
       var next = state === "off" ? "context" : state === "context" ? "track" : "off";
       fetch(API + "/spotify/repeat?state=" + next, { method: "POST" })
-        .then(function (r) { if (r.ok) pollNowPlaying(); });
+        .then(function (r) {
+          if (r.ok) pollNowPlaying();
+          else return r.json().catch(function () { return {}; }).then(function (body) {
+            showErr((body && body.detail) ? body.detail : "Repeat failed.");
+          });
+        })
+        .catch(function () { showErr("Repeat request failed."); });
     });
   });
 

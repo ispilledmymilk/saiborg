@@ -144,6 +144,7 @@ def _api_request(method: str, endpoint: str, json_body: dict = None, params: dic
     token = _ensure_access_token()
     if not token:
         return None, None
+    import logging
     import httpx
     r = httpx.request(
         method,
@@ -155,6 +156,11 @@ def _api_request(method: str, endpoint: str, json_body: dict = None, params: dic
     )
     if r.status_code in (200, 204):
         return (r.json() if r.content else {}), r.status_code
+    try:
+        err_body = r.json()
+    except Exception:
+        err_body = (r.text or "")[:500]
+    logging.warning("Spotify API failed %s %s: %s %s", method, endpoint, r.status_code, err_body)
     return None, r.status_code
 
 
@@ -166,23 +172,80 @@ def _api_request_ok(method: str, endpoint: str, json_body: dict = None, params: 
     return False, status
 
 
-def play():
-    ok, status = _api_request_ok("PUT", "/me/player/play")
+def get_devices():
+    """Return list of devices: [{"id": "...", "name": "...", "is_active": bool}, ...]."""
+    data, _ = _api_request("GET", "/me/player/devices")
+    if not data or "devices" not in data:
+        return []
+    return [
+        {"id": d.get("id"), "name": d.get("name", "Unknown"), "is_active": d.get("is_active", False)}
+        for d in data["devices"] if d.get("id")
+    ]
+
+
+def _ensure_active_device(start_playback: bool = False):
+    """If no active device, transfer to first available device. Returns True if we have (or had) an active device."""
+    state = get_playback_state()
+    if state:
+        return True
+    devices = get_devices()
+    if not devices:
+        return False
+    device_id = devices[0]["id"]
+    body = {"device_ids": [device_id], "play": start_playback}
+    ok, _ = _api_request_ok("PUT", "/me/player", json_body=body)
+    return ok
+
+
+def play(device_id: str = None):
+    json_body = {"device_id": device_id} if device_id else None
+    ok, status = _api_request_ok("PUT", "/me/player/play", json_body=json_body)
+    if not ok and status == 404:
+        if _ensure_active_device(start_playback=True):
+            ok, status = _api_request_ok("PUT", "/me/player/play")
     return ok, status
 
 
 def pause():
     ok, status = _api_request_ok("PUT", "/me/player/pause")
+    if not ok and status == 404:
+        _ensure_active_device(start_playback=False)
+        ok, status = _api_request_ok("PUT", "/me/player/pause")
     return ok, status
 
 
+def _get_target_device_id():
+    """Return the active device id, or the first available device id, so we can target API calls."""
+    state = get_playback_state()
+    if state and state.get("device", {}).get("id"):
+        return state["device"]["id"]
+    devices = get_devices()
+    if devices:
+        return devices[0]["id"]
+    return None
+
+
 def next_track():
-    ok, status = _api_request_ok("POST", "/me/player/next")
+    device_id = _get_target_device_id()
+    params = {"device_id": device_id} if device_id else None
+    ok, status = _api_request_ok("POST", "/me/player/next", params=params)
+    if not ok and status == 404:
+        if _ensure_active_device(start_playback=False):
+            device_id = _get_target_device_id()
+            params = {"device_id": device_id} if device_id else None
+            ok, status = _api_request_ok("POST", "/me/player/next", params=params)
     return ok, status
 
 
 def previous_track():
-    ok, status = _api_request_ok("POST", "/me/player/previous")
+    device_id = _get_target_device_id()
+    params = {"device_id": device_id} if device_id else None
+    ok, status = _api_request_ok("POST", "/me/player/previous", params=params)
+    if not ok and status == 404:
+        if _ensure_active_device(start_playback=False):
+            device_id = _get_target_device_id()
+            params = {"device_id": device_id} if device_id else None
+            ok, status = _api_request_ok("POST", "/me/player/previous", params=params)
     return ok, status
 
 
@@ -193,6 +256,9 @@ def seek(position_ms: int):
 
 def set_shuffle(state: bool):
     ok, _ = _api_request_ok("PUT", "/me/player/shuffle", params={"state": "true" if state else "false"})
+    if not ok:
+        _ensure_active_device(start_playback=False)
+        ok, _ = _api_request_ok("PUT", "/me/player/shuffle", params={"state": "true" if state else "false"})
     return ok
 
 

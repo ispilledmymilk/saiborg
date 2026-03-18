@@ -81,6 +81,7 @@
                   <button type="button" class="sidebar-spotify-btn" id="sidebar-spotify-play" title="Play / Pause" aria-label="Play Pause">▶</button>
                   <button type="button" class="sidebar-spotify-btn" id="sidebar-spotify-next" title="Next" aria-label="Next">⏭</button>
                 </div>
+                <p class="sidebar-spotify-error hidden" id="sidebar-spotify-error" role="alert"></p>
               </div>
               <p class="sidebar-spotify-hint text-muted">Open full player from the main view.</p>
             </div>
@@ -164,7 +165,12 @@
             <input type="text" id="chat-input" placeholder="Type or say something…" autocomplete="off" />
             <button type="submit">Send</button>
           </form>
+          <label class="voice-tts-toggle" title="Speak assistant responses out loud">
+            <input type="checkbox" id="voice-tts-toggle" aria-label="Speak responses" />
+            <span class="voice-tts-label">Speak</span>
+          </label>
         </div>
+        <p class="voice-hint text-muted" id="voice-hint">Hold mic: server voice (Whisper, works offline) or browser voice. Try: &ldquo;next song&rdquo;, &ldquo;what&rsquo;s on my calendar today&rdquo;</p>
       </section>
     </main>
   </div>
@@ -235,6 +241,7 @@
           <button type="button" class="spotify-modal-btn" id="spotify-modal-next" title="Next" aria-label="Next">⏭</button>
           <button type="button" class="spotify-modal-btn" id="spotify-modal-repeat" title="Repeat" aria-label="Repeat">🔁</button>
         </div>
+        <p class="spotify-control-error hidden" id="spotify-control-error" role="alert"></p>
         <div class="spotify-modal-tabs">
           <button type="button" class="spotify-modal-tab active" data-spotify-panel="queue">Queue</button>
           <button type="button" class="spotify-modal-tab" data-spotify-panel="playlists">Playlists</button>

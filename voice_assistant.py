@@ -88,15 +88,39 @@ def transcribe(audio):
         f.write(audio.get_wav_data())
         path = f.name
     try:
-        model = get_whisper_model()
-        audio_array = load_wav_to_whisper_format(path)
-        result = model.transcribe(audio_array, fp16=False)
-        return (result.get("text") or "").strip()
+        return _transcribe_wav_path(path)
     finally:
         try:
             os.unlink(path)
         except OSError:
             pass
+
+
+def transcribe_wav_bytes(wav_bytes: bytes) -> str:
+    """Transcribe WAV file bytes (e.g. from browser recording). Returns transcribed text or empty string."""
+    if not wav_bytes:
+        return ""
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        f.write(wav_bytes)
+        path = f.name
+    try:
+        return _transcribe_wav_path(path)
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def _transcribe_wav_path(path: str) -> str:
+    """Load WAV from path and run Whisper. Used by transcribe and transcribe_wav_bytes."""
+    try:
+        model = get_whisper_model()
+        audio_array = load_wav_to_whisper_format(path)
+        result = model.transcribe(audio_array, fp16=False)
+        return (result.get("text") or "").strip()
+    except Exception:
+        return ""
 
 def get_response(text):
     """Simple local brain: schedule, time, greeting, help."""
